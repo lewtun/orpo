@@ -43,8 +43,8 @@ export CMD=" \
     --num_proc 32 \
     --flash_attention_2 \
     --push_to_hub true \
-    --save_dir data/Qwen1.5-0.5B-capybara-dpo-7k-v0.1.1 \
-    --hub_model_id orpo-explorers/Qwen1.5-0.5B-capybara-dpo-7k-v0.1.1
+    --save_dir data/Qwen1.5-0.5B-capybara-dpo-7k-v0.1 \
+    --hub_model_id orpo-explorers/Qwen1.5-0.5B-capybara-dpo-7k-v0.1
     "
 
 export LAUNCHER="HF_HUB_ENABLE_HF_TRANSFER=1 ACCELERATE_LOG_LEVEL=info TRANSFORMERS_VERBOSITY=info accelerate launch \

@@ -34,7 +34,7 @@ def filter_dataset(examples: Union[List, Dict], tokenizer, prompt_max_length):
     else:
         return False
 
-def preprocess_dataset(examples: Union[List, Dict], tokenizer, response_max_length):
+def apply_chat_template(examples: Union[List, Dict], tokenizer):
     if ('instruction' in examples.keys()) or ('question' in examples.keys()):
         prompt_key = 'instruction' if 'instruction' in examples.keys() else 'question'
         prompt = [tokenizer.apply_chat_template([{'role': 'user', 'content': item}], tokenize=False, add_generation_prompt=True) for item in examples[prompt_key]]
@@ -45,17 +45,30 @@ def preprocess_dataset(examples: Union[List, Dict], tokenizer, response_max_leng
         chosen = [tokenizer.apply_chat_template(item, tokenize=False) for item in examples['chosen']]
         rejected = [tokenizer.apply_chat_template(item, tokenize=False) for item in examples['rejected']]
 
-    model_inputs = tokenizer(prompt,
+    return {'prompt': prompt, 'chosen': chosen, 'rejected': rejected}
+
+def preprocess_dataset(examples: Union[List, Dict], tokenizer, response_max_length):
+    # if ('instruction' in examples.keys()) or ('question' in examples.keys()):
+    #     prompt_key = 'instruction' if 'instruction' in examples.keys() else 'question'
+    #     prompt = [tokenizer.apply_chat_template([{'role': 'user', 'content': item}], tokenize=False, add_generation_prompt=True) for item in examples[prompt_key]]
+    #     chosen = [tokenizer.apply_chat_template([{'role': 'user', 'content': item_prompt}, {'role': 'assistant', 'content': item_chosen}], tokenize=False) for item_prompt, item_chosen in zip(examples[prompt_key], examples['chosen'])]
+    #     rejected = [tokenizer.apply_chat_template([{'role': 'user', 'content': item_prompt}, {'role': 'assistant', 'content': item_rejected}], tokenize=False) for item_prompt, item_rejected in zip(examples[prompt_key], examples['rejected'])]
+    # else:
+    #     prompt = [tokenizer.apply_chat_template([item[0]], tokenize=False, add_generation_prompt=True) for item in examples['chosen']]
+    #     chosen = [tokenizer.apply_chat_template(item, tokenize=False) for item in examples['chosen']]
+    #     rejected = [tokenizer.apply_chat_template(item, tokenize=False) for item in examples['rejected']]
+
+    model_inputs = tokenizer(examples["prompt"],
                                     max_length=response_max_length,
                                     padding='max_length',
                                     truncation=True,
                                     return_tensors='pt')
-    pos_labels = tokenizer(chosen,
+    pos_labels = tokenizer(examples["chosen"],
                                 max_length=response_max_length,
                                 padding='max_length',
                                 truncation=True,
                                 return_tensors='pt')
-    neg_labels = tokenizer(rejected,
+    neg_labels = tokenizer(examples["rejected"],
                                 max_length=response_max_length,
                                 padding='max_length',
                                 truncation=True,
@@ -84,6 +97,34 @@ class ORPO(object):
             pass
         self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
 
+
+        # Load Dataset
+        print(">>> 3. Loading Dataset")
+        self.data = load_dataset(self.args.data_name, cache_dir=self.args.cache_dir)
+
+        # Preprocess Dataset
+        # with PartialState().local_main_process_first(): # Gives NCCL errors in multi-node
+        print(">>> 4. Filtering and Preprocessing Dataset")
+        data_split = dataset_split_selector(self.data)
+
+        if len(data_split) == 1:
+            self.is_test = False
+            train_split = data_split[0]
+            print(f"   >>> Test Set = {self.is_test}")
+        else:
+            self.is_test = True
+            train_split = data_split[0]
+            test_split = data_split[1]
+
+            test = self.data[test_split].filter(filter_dataset, fn_kwargs={"tokenizer": self.tokenizer, "prompt_max_length": self.args.prompt_max_length}, num_proc=self.args.num_proc, desc="Filtering test set...")
+            test = test.map(apply_chat_template, fn_kwargs={"tokenizer": self.tokenizer}, batched=True, num_proc=self.args.num_proc, desc="Applying chat template to test set...")       
+            self.test = test.map(preprocess_dataset, fn_kwargs={"tokenizer": self.tokenizer, "response_max_length": self.args.response_max_length}, batched=True, num_proc=self.args.num_proc, remove_columns=self.data[test_split].column_names, desc="Preprocessing test set...")       
+
+        train = self.data[train_split].filter(filter_dataset, fn_kwargs={"tokenizer": self.tokenizer, "prompt_max_length": self.args.prompt_max_length}, num_proc=self.args.num_proc, desc="Filtering training set...")
+        print(f"\n\n>>> {len(train)} / {len(self.data[train_split])} rows left after filtering by prompt length.")
+        train = train.map(apply_chat_template, fn_kwargs={"tokenizer": self.tokenizer}, batched=True, num_proc=self.args.num_proc, desc="Applying chat template to train set...")       
+        self.train = train.map(preprocess_dataset, fn_kwargs={"tokenizer": self.tokenizer, "response_max_length": self.args.response_max_length}, batched=True, num_proc=self.args.num_proc, remove_columns=self.data[train_split].column_names, desc="Preprocessing training set...")      
+
         # Load Model
         print(">>> 2. Loading Model")
         if self.args.flash_attention_2:
@@ -97,31 +138,7 @@ class ORPO(object):
                                                               cache_dir=self.args.cache_dir,
                                                               torch_dtype=torch.bfloat16,
                                                               trust_remote_code=self.args.trust_remote_code)
-                                                          
-        # Load Dataset
-        print(">>> 3. Loading Dataset")
-        self.data = load_dataset(self.args.data_name, cache_dir=self.args.cache_dir)
-
-        # Preprocess Dataset
-        with PartialState().local_main_process_first():
-            print(">>> 4. Filtering and Preprocessing Dataset")
-            data_split = dataset_split_selector(self.data)
-
-            if len(data_split) == 1:
-                self.is_test = False
-                train_split = data_split[0]
-                print(f"   >>> Test Set = {self.is_test}")
-            else:
-                self.is_test = True
-                train_split = data_split[0]
-                test_split = data_split[1]
-
-                test = self.data[test_split].filter(filter_dataset, fn_kwargs={"tokenizer": self.tokenizer, "prompt_max_length": self.args.prompt_max_length}, num_proc=self.args.num_proc, desc="Filtering test set...")
-                self.test = test.map(preprocess_dataset, fn_kwargs={"tokenizer": self.tokenizer, "response_max_length": self.args.response_max_length}, batched=True, remove_columns=self.data[test_split].column_names, desc="Preprocessing test set...")       
-
-            train = self.data[train_split].filter(filter_dataset, fn_kwargs={"tokenizer": self.tokenizer, "prompt_max_length": self.args.prompt_max_length}, num_proc=self.args.num_proc, desc="Filtering training set...")
-            print(f"\n\n>>> {len(train)} / {len(self.data[train_split])} rows left after filtering by prompt length.")
-            self.train = train.map(preprocess_dataset, fn_kwargs={"tokenizer": self.tokenizer, "response_max_length": self.args.response_max_length}, batched=True, remove_columns=self.data[train_split].column_names, desc="Preprocessing training set...")                       
+                                                                         
                     
         # Set WANDB & Logging Configurations
         self.run_name = f"{self.args.model_name.split('/')[-1]}-{self.args.data_name.split('/')[-1]}-lambda{self.args.alpha}-ORPO-{self.start.tm_mday}-{self.start.tm_hour}-{self.start.tm_min}"
@@ -193,6 +210,11 @@ class ORPO(object):
         self.trainer.accelerator.wait_for_everyone()
         if self.trainer.accelerator.is_main_process:
             shutil.rmtree(self.trainer.args.output_dir)
+
+        self.trainer.accelerator.wait_for_everyone()
+        wandb.finish()
+
+        print("*** Run complete! ***")
         
         
 if __name__ == '__main__':
