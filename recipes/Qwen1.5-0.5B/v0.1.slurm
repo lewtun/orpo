@@ -12,43 +12,43 @@ source ~/.bashrc
 conda activate orpo
 echo "START TIME: $(date)"
 
-MODEL=$1
-TASK=$2
-PRECISION=$3
-ACCELERATOR=$4
-OPTIONAL_ARGS=$5
+ACCELERATOR=$1
+GRAD_ACC_STEPS=$2
 
 # Training setup
 NUM_NODES=$SLURM_NNODES
 GPUS_PER_NODE=8
 WORLD_SIZE=$(($NUM_NODES*$GPUS_PER_NODE))
-# Due to conflicts between Accelerate's DeepSpeed configs and Transformers' TrainingArguments, we need to parse the gradient accumulation steps from the config file to ensure they match
-CONFIG_FILE=recipes/$MODEL/$TASK/config_$PRECISION.yaml
-GRAD_ACC_STEPS=$(grep 'gradient_accumulation_steps' $CONFIG_FILE | awk '{print $2}')
 
-# Split the string into individual arguments
-IFS=' ' read -ra ARGS <<< "$OPTIONAL_ARGS"
-
-# Loop through the arguments and find the one with "--gradient_accumulation_steps"
-for arg in "${ARGS[@]}"; do
-    if [[ "$arg" == "--gradient_accumulation_steps="* ]]; then
-        # Extract the value after the equals sign
-        GRAD_ACC_STEPS="${arg#*=}"
-        break  # Exit the loop once we find the desired argument
-    fi
-done
-
-echo "Gradient accumulation steps: $GRAD_ACC_STEPS"
 # so processes know who to talk to
 MASTER_ADDR=$(scontrol show hostnames $SLURM_JOB_NODELIST | head -n 1)
 MASTER_PORT=6000
 
 export CMD=" \
-    scripts/run_$TASK.py $CONFIG_FILE $OPTIONAL_ARGS
+    main.py \
+    --lr 5e-6 \
+    --torch_compile False \
+    --alpha 0.05 \
+    --lr_scheduler_type inverse_sqrt \
+    --warmup_steps 100 \
+    --model_name Qwen/Qwen1.5-0.5B \
+    --data_name argilla/distilabel-capybara-dpo-7k-binarized \
+    --num_train_epochs 3 \
+    --optim adamw_torch \
+    --gradient_accumulation_steps $GRAD_ACC_STEPS \
+    --prompt_max_length 1792 \
+    --response_max_length 2048 \
+    --per_device_train_batch_size 4 \
+    --per_device_eval_batch_size 8 \
+    --num_proc 32 \
+    --flash_attention_2 \
+    --push_to_hub true \
+    --save_dir data/Qwen1.5-0.5B-capybara-dpo-7k-v0.1 \
+    --hub_model_id orpo-explorers/Qwen1.5-0.5B-capybara-dpo-7k-v0.1
     "
 
 export LAUNCHER="HF_HUB_ENABLE_HF_TRANSFER=1 ACCELERATE_LOG_LEVEL=info TRANSFORMERS_VERBOSITY=info accelerate launch \
-    --config_file recipes/accelerate_configs/$ACCELERATOR.yaml  \
+    --config_file src/accelerate/$ACCELERATOR.yaml  \
     --gradient_accumulation_steps $GRAD_ACC_STEPS \
     --num_machines $NUM_NODES \
     --num_processes $WORLD_SIZE \
