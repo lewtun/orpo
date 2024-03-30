@@ -24,6 +24,7 @@ accelerate launch --config_file ./src/accelerate/fsdp.yaml main.py \
     --push_to_hub true \
     --save_dir data/Qwen1.5-0.5B-capybara-dpo-7k-v0.1 \
     --hub_model_id orpo-explorers/Qwen1.5-0.5B-capybara-dpo-7k-v0.1
+    
 
 # 72B - can't fit on 1 node :(
 
