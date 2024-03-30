@@ -151,7 +151,9 @@ class ORPO(object):
             remove_unused_columns=False,
             report_to='wandb',
             run_name=self.run_name,
-            bf16=True
+            bf16=True,
+            hub_model_id=self.args.hub_model_id,
+            push_to_hub=self.args.push_to_hub,
         )
         
         data_collator = DataCollatorForLanguageModeling(tokenizer=self.tokenizer, mlm=False)
@@ -176,6 +178,9 @@ class ORPO(object):
         if self.trainer.is_fsdp_enabled:
             self.trainer.accelerator.state.fsdp_plugin.set_state_dict_type("FULL_STATE_DICT")
         self.trainer.save_model()
+
+        if self.arguments.push_to_hub:
+            self.trainer.push_to_hub()
         
         
 if __name__ == '__main__':

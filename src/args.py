@@ -23,6 +23,8 @@ def default_args(parser):
     parser.add_argument("--prompt_max_length", default=256, type=int)
     parser.add_argument("--response_max_length", default=1024, type=int)
     parser.add_argument("--alpha", default=1.0, type=float, help="Hyperparameter for weighting L_OR")
+    parser.add_argument("--push_to_hub", default=False, type=bool)
+    parser.add_argument("--hub_model_id", default=None, type=str)
 
     # Wandb Configurations
     parser.add_argument("--wandb_entity", default=None, type=str)
