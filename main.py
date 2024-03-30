@@ -16,6 +16,57 @@ from transformers import (
 from src.args import default_args
 from src.orpo_trainer import ORPOTrainer
 from src.utils import preprocess_logits_for_metrics, dataset_split_selector
+import shutil
+
+def filter_dataset(examples: Union[List, Dict], tokenizer, prompt_max_length):
+    if 'instruction' in examples.keys():
+        query = examples['instruction']
+        prompt_length = tokenizer.apply_chat_template([{'content': query, 'role': 'user'}], tokenize=True, add_generation_prompt=True, return_tensors='pt').size(-1)
+    elif 'question' in examples.keys():
+        query = examples['question']
+        prompt_length = tokenizer.apply_chat_template([{'content': query, 'role': 'user'}], tokenize=True, add_generation_prompt=True, return_tensors='pt').size(-1)
+    else:
+        prompt_length = tokenizer.apply_chat_template([examples['chosen'][0]], tokenize=True, add_generation_prompt=True, return_tensors='pt').size(-1)  
+        
+    if prompt_length < prompt_max_length:    
+        return True
+    else:
+        return False
+
+def preprocess_dataset(examples: Union[List, Dict], tokenizer, response_max_length):
+    if ('instruction' in examples.keys()) or ('question' in examples.keys()):
+        prompt_key = 'instruction' if 'instruction' in examples.keys() else 'question'
+        prompt = [tokenizer.apply_chat_template([{'role': 'user', 'content': item}], tokenize=False, add_generation_prompt=True) for item in examples[prompt_key]]
+        chosen = [tokenizer.apply_chat_template([{'role': 'user', 'content': item_prompt}, {'role': 'assistant', 'content': item_chosen}], tokenize=False) for item_prompt, item_chosen in zip(examples[prompt_key], examples['chosen'])]
+        rejected = [tokenizer.apply_chat_template([{'role': 'user', 'content': item_prompt}, {'role': 'assistant', 'content': item_rejected}], tokenize=False) for item_prompt, item_rejected in zip(examples[prompt_key], examples['rejected'])]
+    else:
+        prompt = [tokenizer.apply_chat_template([item[0]], tokenize=False, add_generation_prompt=True) for item in examples['chosen']]
+        chosen = [tokenizer.apply_chat_template(item, tokenize=False) for item in examples['chosen']]
+        rejected = [tokenizer.apply_chat_template(item, tokenize=False) for item in examples['rejected']]
+
+    model_inputs = tokenizer(prompt,
+                                    max_length=response_max_length,
+                                    padding='max_length',
+                                    truncation=True,
+                                    return_tensors='pt')
+    pos_labels = tokenizer(chosen,
+                                max_length=response_max_length,
+                                padding='max_length',
+                                truncation=True,
+                                return_tensors='pt')
+    neg_labels = tokenizer(rejected,
+                                max_length=response_max_length,
+                                padding='max_length',
+                                truncation=True,
+                                return_tensors='pt') 
+            
+    model_inputs['positive_input_ids'] = pos_labels['input_ids']
+    model_inputs['positive_attention_mask'] = pos_labels['attention_mask']
+    
+    model_inputs['negative_input_ids'] = neg_labels['input_ids']
+    model_inputs['negative_attention_mask'] = neg_labels['attention_mask']
+    
+    return model_inputs
 
 class ORPO(object):
     def __init__(self, args) -> None:
@@ -61,76 +112,26 @@ class ORPO(object):
             train_split = data_split[0]
             test_split = data_split[1]
 
-            test = self.data[test_split].filter(self.filter_dataset)
-            self.test = test.map(self.preprocess_dataset, batched=True, num_proc=self.args.num_proc, remove_columns=self.data[test_split].column_names)       
+            test = self.data[test_split].filter(filter_dataset, fn_kwargs={"tokenizer": self.tokenizer, "prompt_max_length": self.args.prompt_max_length}, num_proc=self.args.num_proc, desc="Filtering test set...")
+            self.test = test.map(preprocess_dataset, fn_kwargs={"tokenizer": self.tokenizer, "response_max_length": self.args.response_max_length}, batched=True, remove_columns=self.data[test_split].column_names, desc="Preprocessing test set...")       
 
-        train = self.data[train_split].filter(self.filter_dataset)
+        train = self.data[train_split].filter(filter_dataset, fn_kwargs={"tokenizer": self.tokenizer, "prompt_max_length": self.args.prompt_max_length}, num_proc=self.args.num_proc, desc="Filtering training set...")
         print(f"\n\n>>> {len(train)} / {len(self.data[train_split])} rows left after filtering by prompt length.")
-        self.train = train.map(self.preprocess_dataset, batched=True, num_proc=self.args.num_proc, remove_columns=self.data[train_split].column_names)                       
+        self.train = train.map(preprocess_dataset, fn_kwargs={"tokenizer": self.tokenizer, "response_max_length": self.args.response_max_length}, batched=True, remove_columns=self.data[train_split].column_names, desc="Preprocessing training set...")                       
                 
         # Set WANDB & Logging Configurations
         self.run_name = f"{self.args.model_name.split('/')[-1]}-{self.args.data_name.split('/')[-1]}-lambda{self.args.alpha}-ORPO-{self.start.tm_mday}-{self.start.tm_hour}-{self.start.tm_min}"
-        self.save_dir = os.path.join('./checkpoints/', f"{self.args.data_name.split('/')[-1]}/{self.run_name}")
-        self.log_dir = os.path.join('./checkpoints/', f"{self.args.data_name.split('/')[-1]}/{self.run_name}/logs")
+        # self.save_dir = os.path.join('./checkpoints/', f"{self.args.data_name.split('/')[-1]}/{self.run_name}")
+        # self.log_dir = os.path.join('./checkpoints/', f"{self.args.data_name.split('/')[-1]}/{self.run_name}/logs")
         
-        os.makedirs(self.save_dir, exist_ok=True)
-        os.makedirs(self.log_dir, exist_ok=True)
-
-    def preprocess_dataset(self, examples: Union[List, Dict]):
-        if ('instruction' in examples.keys()) or ('question' in examples.keys()):
-            prompt_key = 'instruction' if 'instruction' in examples.keys() else 'question'
-            prompt = [self.tokenizer.apply_chat_template([{'role': 'user', 'content': item}], tokenize=False, add_generation_prompt=True) for item in examples[prompt_key]]
-            chosen = [self.tokenizer.apply_chat_template([{'role': 'user', 'content': item_prompt}, {'role': 'assistant', 'content': item_chosen}], tokenize=False) for item_prompt, item_chosen in zip(examples[prompt_key], examples['chosen'])]
-            rejected = [self.tokenizer.apply_chat_template([{'role': 'user', 'content': item_prompt}, {'role': 'assistant', 'content': item_rejected}], tokenize=False) for item_prompt, item_rejected in zip(examples[prompt_key], examples['rejected'])]
-        else:
-            prompt = [self.tokenizer.apply_chat_template([item[0]], tokenize=False, add_generation_prompt=True) for item in examples['chosen']]
-            chosen = [self.tokenizer.apply_chat_template(item, tokenize=False) for item in examples['chosen']]
-            rejected = [self.tokenizer.apply_chat_template(item, tokenize=False) for item in examples['rejected']]
-    
-        model_inputs = self.tokenizer(prompt,
-                                      max_length=self.args.response_max_length,
-                                      padding='max_length',
-                                      truncation=True,
-                                      return_tensors='pt')
-        pos_labels = self.tokenizer(chosen,
-                                    max_length=self.args.response_max_length,
-                                    padding='max_length',
-                                    truncation=True,
-                                    return_tensors='pt')
-        neg_labels = self.tokenizer(rejected,
-                                    max_length=self.args.response_max_length,
-                                    padding='max_length',
-                                    truncation=True,
-                                    return_tensors='pt') 
-                
-        model_inputs['positive_input_ids'] = pos_labels['input_ids']
-        model_inputs['positive_attention_mask'] = pos_labels['attention_mask']
-        
-        model_inputs['negative_input_ids'] = neg_labels['input_ids']
-        model_inputs['negative_attention_mask'] = neg_labels['attention_mask']
-        
-        return model_inputs
-
-    def filter_dataset(self, examples: Union[List, Dict]):
-        if 'instruction' in examples.keys():
-            query = examples['instruction']
-            prompt_length = self.tokenizer.apply_chat_template([{'content': query, 'role': 'user'}], tokenize=True, add_generation_prompt=True, return_tensors='pt').size(-1)
-        elif 'question' in examples.keys():
-            query = examples['question']
-            prompt_length = self.tokenizer.apply_chat_template([{'content': query, 'role': 'user'}], tokenize=True, add_generation_prompt=True, return_tensors='pt').size(-1)
-        else:
-            prompt_length = self.tokenizer.apply_chat_template([examples['chosen'][0]], tokenize=True, add_generation_prompt=True, return_tensors='pt').size(-1)  
-           
-        if prompt_length < self.args.prompt_max_length:    
-            return True
-        else:
-            return False
+        # os.makedirs(self.save_dir, exist_ok=True)
+        # os.makedirs(self.log_dir, exist_ok=True)
 
     def prepare_trainer(self):
         wandb.init(name=self.run_name)
         arguments = TrainingArguments(
-            output_dir=self.save_dir,  # The output directory
-            logging_dir=self.log_dir,
+            output_dir=self.args.save_dir,  # The output directory
+            # logging_dir=self.log_dir,
             logging_steps=50,
             learning_rate=self.args.lr,
             overwrite_output_dir=True,  # overwrite the content of the output directory
@@ -154,6 +155,8 @@ class ORPO(object):
             bf16=True,
             hub_model_id=self.args.hub_model_id,
             push_to_hub=self.args.push_to_hub,
+            hub_private_repo=True,
+            max_steps=self.args.max_steps
         )
         
         data_collator = DataCollatorForLanguageModeling(tokenizer=self.tokenizer, mlm=False)
@@ -179,8 +182,12 @@ class ORPO(object):
             self.trainer.accelerator.state.fsdp_plugin.set_state_dict_type("FULL_STATE_DICT")
         self.trainer.save_model()
 
-        if self.arguments.push_to_hub:
+        if self.trainer.args.push_to_hub:
             self.trainer.push_to_hub()
+
+        self.trainer.accelerator.wait_for_everyone()
+        if self.trainer.accelerator.is_main_process:
+            shutil.rmtree(self.trainer.args.output_dir)
         
         
 if __name__ == '__main__':

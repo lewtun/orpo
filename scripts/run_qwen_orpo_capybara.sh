@@ -11,7 +11,7 @@ accelerate launch --config_file ./src/accelerate/fsdp.yaml main.py \
     --model_name Qwen/Qwen1.5-0.5B \
     --data_name argilla/distilabel-capybara-dpo-7k-binarized \
     --num_train_epochs 3 \
-    --optim adamw_bnb_8bit \
+    --optim adamw_torch \
     --gradient_accumulation_steps 1 \
     --prompt_max_length 1792 \
     --response_max_length 2048 \
@@ -20,4 +20,5 @@ accelerate launch --config_file ./src/accelerate/fsdp.yaml main.py \
     --num_proc 32 \
     --flash_attention_2 \
     --push_to_hub true \
+    --save_dir data/Qwen1.5-0.5B-capybara-dpo-7k-v0.1 \
     --hub_model_id orpo-explorers/Qwen1.5-0.5B-capybara-dpo-7k-v0.1
