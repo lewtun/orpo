@@ -26,6 +26,7 @@ def default_args(parser):
     parser.add_argument("--push_to_hub", default=False, type=bool)
     parser.add_argument("--hub_model_id", default=None, type=str)
     parser.add_argument("--max_steps", default=-1, type=int)
+    parser.add_argument("--trust_remote_code", default=False, type=bool)
 
     # Wandb Configurations
     parser.add_argument("--wandb_entity", default=None, type=str)
