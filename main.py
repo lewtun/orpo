@@ -149,7 +149,7 @@ class ORPO(object):
         # os.makedirs(self.log_dir, exist_ok=True)
 
     def prepare_trainer(self):
-        # wandb.init(name=self.run_name)
+        wandb.init(name=self.run_name)
         arguments = TrainingArguments(
             output_dir=self.args.save_dir,  # The output directory
             # logging_dir=self.log_dir,

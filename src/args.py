@@ -1,3 +1,5 @@
+from typing import Optional
+
 def default_args(parser):
     parser.add_argument("--cache_dir", default=None, type=str)
     parser.add_argument("--save_dir", default='./saved', type=str)
@@ -27,7 +29,7 @@ def default_args(parser):
     parser.add_argument("--hub_model_id", default=None, type=str)
     parser.add_argument("--max_steps", default=-1, type=int)
     parser.add_argument("--trust_remote_code", default=False, type=bool)
-    parser.add_argument("--neftune_noise_alpha", default=None, type=int)
+    parser.add_argument("--neftune_noise_alpha", default=None, type=float)
 
     # Wandb Configurations
     parser.add_argument("--wandb_entity", default=None, type=str)

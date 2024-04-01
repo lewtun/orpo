@@ -17,7 +17,7 @@ GRAD_ACC_STEPS=$2
 ALPHA=$3
 LR=$4
 REVISION=$5
-[ -z "$6"] && NEFTUNE_ALPHA=null || NEFTUNE_ALPHA=$6
+NEFTUNE_ALPHA=$6
 
 # Training setup
 NUM_NODES=$SLURM_NNODES
@@ -28,28 +28,52 @@ WORLD_SIZE=$(($NUM_NODES*$GPUS_PER_NODE))
 MASTER_ADDR=$(scontrol show hostnames $SLURM_JOB_NODELIST | head -n 1)
 MASTER_PORT=6000
 
-export CMD="main.py \
-    --lr $LR \
-    --neftune_noise_alpha $NEFTUNE_ALPHA \
-    --torch_compile False \
-    --alpha $ALPHA \
-    --lr_scheduler_type inverse_sqrt \
-    --warmup_steps 100 \
-    --model_name Qwen/Qwen1.5-7B \
-    --data_name orpo-explorers/OpenHermesPreferences-10k \
-    --num_train_epochs 3 \
-    --optim adamw_torch \
-    --gradient_accumulation_steps $GRAD_ACC_STEPS \
-    --prompt_max_length 1024 \
-    --response_max_length 2048 \
-    --per_device_train_batch_size 4 \
-    --per_device_eval_batch_size 4 \
-    --num_proc 32 \
-    --flash_attention_2 \
-    --push_to_hub true \
-    --save_dir data/Qwen1.5-7B-ohp-10k-$REVISION \
-    --hub_model_id orpo-explorers/Qwen1.5-7B-ohp-10k-$REVISION
-    "
+if [ -n "$NEFTUNE_ALPHA" ]; then
+    export CMD="main.py \
+        --lr $LR \
+        --neftune_noise_alpha $NEFTUNE_ALPHA \
+        --torch_compile False \
+        --alpha $ALPHA \
+        --lr_scheduler_type inverse_sqrt \
+        --warmup_steps 100 \
+        --model_name Qwen/Qwen1.5-7B \
+        --data_name orpo-explorers/OpenHermesPreferences-10k \
+        --num_train_epochs 3 \
+        --optim adamw_torch \
+        --gradient_accumulation_steps $GRAD_ACC_STEPS \
+        --prompt_max_length 1024 \
+        --response_max_length 2048 \
+        --per_device_train_batch_size 4 \
+        --per_device_eval_batch_size 4 \
+        --num_proc 32 \
+        --flash_attention_2 \
+        --push_to_hub true \
+        --save_dir data/Qwen1.5-7B-ohp-10k-$REVISION \
+        --hub_model_id orpo-explorers/Qwen1.5-7B-ohp-10k-$REVISION
+        "
+else
+    export CMD="main.py \
+        --lr $LR \
+        --torch_compile False \
+        --alpha $ALPHA \
+        --lr_scheduler_type inverse_sqrt \
+        --warmup_steps 100 \
+        --model_name Qwen/Qwen1.5-7B \
+        --data_name orpo-explorers/OpenHermesPreferences-10k \
+        --num_train_epochs 3 \
+        --optim adamw_torch \
+        --gradient_accumulation_steps $GRAD_ACC_STEPS \
+        --prompt_max_length 1024 \
+        --response_max_length 2048 \
+        --per_device_train_batch_size 4 \
+        --per_device_eval_batch_size 4 \
+        --num_proc 32 \
+        --flash_attention_2 \
+        --push_to_hub true \
+        --save_dir data/Qwen1.5-7B-ohp-10k-$REVISION \
+        --hub_model_id orpo-explorers/Qwen1.5-7B-ohp-10k-$REVISION
+        "
+fi
 
 export LAUNCHER="HF_HUB_ENABLE_HF_TRANSFER=1 ACCELERATE_LOG_LEVEL=info TRANSFORMERS_VERBOSITY=info accelerate launch \
     --config_file src/accelerate/$ACCELERATOR.yaml  \
