@@ -149,7 +149,7 @@ class ORPO(object):
         # os.makedirs(self.log_dir, exist_ok=True)
 
     def prepare_trainer(self):
-        wandb.init(name=self.run_name)
+        # wandb.init(name=self.run_name)
         arguments = TrainingArguments(
             output_dir=self.args.save_dir,  # The output directory
             # logging_dir=self.log_dir,
@@ -177,8 +177,10 @@ class ORPO(object):
             hub_model_id=self.args.hub_model_id,
             push_to_hub=self.args.push_to_hub,
             hub_private_repo=True,
-            max_steps=self.args.max_steps
+            max_steps=self.args.max_steps,
+            neftune_noise_alpha=self.args.neftune_noise_alpha
         )
+        print(f">>> 5-1. Training Arguments Prepared {arguments}")
         
         data_collator = DataCollatorForLanguageModeling(tokenizer=self.tokenizer, mlm=False)
         
